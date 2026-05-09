@@ -335,110 +335,129 @@ function AnalysisPanel({ ds }: { ds: CohortDataset }) {
   const exportPDF = async () => {
     setExporting(true);
     try {
-      const [{ default: jsPDF }, { default: html2canvas }] = await Promise.all([
-        import("jspdf"),
-        import("html2canvas"),
-      ]);
-
       const el = reportRef.current;
       if (!el) return;
 
-      // Temporarily show all tabs content
-      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-      const pageW = 210; const pageH = 297; const margin = 12;
+      // Завантажуємо бібліотеки через CDN (надійніше ніж dynamic import у Next.js)
+      const loadScript = (src: string) => new Promise<void>((resolve, reject) => {
+        if (document.querySelector(`script[src="${src}"]`)) { resolve(); return; }
+        const s = document.createElement("script");
+        s.src = src;
+        s.onload = () => resolve();
+        s.onerror = () => reject(new Error(`Failed to load ${src}`));
+        document.head.appendChild(s);
+      });
+
+      await loadScript("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js");
+      await loadScript("https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js");
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { jsPDF } = (window as any).jspdf;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const html2canvas = (window as any).html2canvas;
+
+      const margin = 12;
+      const pageW = 210;
+      const pageH = 297;
       const contentW = pageW - margin * 2;
+      const date = new Date().toISOString().slice(0, 10);
 
-      // Title page
+      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+
+      // ── Сторінка 1: Статистика ──
       pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(18);
-      pdf.text("Virtual ICU — Когортна статистика", margin, 30);
+      pdf.setFontSize(16);
+      pdf.text("Virtual ICU — Когортна статистика", margin, 24);
       pdf.setFont("helvetica", "normal");
-      pdf.setFontSize(11);
-      pdf.text(`Файл: ${ds.name}`, margin, 42);
-      pdf.text(`Дата: ${new Date().toLocaleDateString("uk-UA")}`, margin, 50);
-      pdf.text(`Пацієнтів: ${n}`, margin, 58);
+      pdf.setFontSize(10);
+      pdf.setTextColor(100);
+      pdf.text(`Файл: ${ds.name}`, margin, 34);
+      pdf.text(`Дата: ${new Date().toLocaleDateString("uk-UA")}`, margin, 40);
+      pdf.text(`Пацієнтів: ${n}`, margin, 46);
+      pdf.setTextColor(0);
 
-      // Summary table
-      let y = 75;
-      pdf.setFont("helvetica", "bold"); pdf.setFontSize(13);
+      let y = 60;
+      pdf.setFont("helvetica", "bold"); pdf.setFontSize(12);
       pdf.text("Загальна статистика", margin, y); y += 8;
-      pdf.setFont("helvetica", "normal"); pdf.setFontSize(10);
 
       const summaryRows: [string, string][] = [
         ["Всього пацієнтів", String(n)],
         ...(mortality > 0 ? [["Летальність", `${mortality} (${Math.round(100 * mortality / n)}%)`] as [string, string]] : []),
-        ...(ageArr.length ? [["Середній вік", `${mean(ageArr).toFixed(1)} р`] as [string, string]] : []),
+        ...(ageArr.length ? [["Середній вік", `${mean(ageArr).toFixed(1)} р (${Math.min(...ageArr).toFixed(0)}–${Math.max(...ageArr).toFixed(0)})`] as [string, string]] : []),
         ...(icuArr.length ? [["ICU дні (сер./медіана)", `${mean(icuArr).toFixed(1)} / ${median(icuArr).toFixed(1)}`] as [string, string]] : []),
-        ...(ventHArr.length ? [["ШВЛ год (сер.)", mean(ventHArr).toFixed(1)] as [string, string]] : []),
+        ...(hospArr.length ? [["Ліжко-дні (сер.)", mean(hospArr).toFixed(1)] as [string, string]] : []),
+        ...(ventHArr.length ? [["ШВЛ год (сер./макс)", `${mean(ventHArr).toFixed(1)} / ${Math.max(...ventHArr).toFixed(0)}`] as [string, string]] : []),
         ...(eblArr.length ? [["Крововтрата мл (сер.)", mean(eblArr).toFixed(0)] as [string, string]] : []),
+        ...(urgentN > 0 ? [["Ургентні", `${urgentN} (${Math.round(100 * urgentN / n)}%)`] as [string, string]] : []),
       ];
 
       summaryRows.forEach(([label, val], i) => {
-        if (i % 2 === 0) { pdf.setFillColor(248, 250, 252); pdf.rect(margin, y - 4, contentW, 7, "F"); }
+        if (i % 2 === 0) { pdf.setFillColor(245, 247, 250); pdf.rect(margin, y - 4, contentW, 7, "F"); }
+        pdf.setFont("helvetica", "normal"); pdf.setFontSize(10);
         pdf.text(label, margin + 2, y);
-        pdf.text(val, margin + contentW - 2, y, { align: "right" });
-        y += 8;
+        pdf.text(val, pageW - margin - 2, y, { align: "right" });
+        y += 7;
       });
 
       // Groups table
       if (groupStats.length > 0) {
         y += 8;
-        if (y > pageH - 60) { pdf.addPage(); y = 20; }
-        pdf.setFont("helvetica", "bold"); pdf.setFontSize(13);
+        if (y > pageH - 70) { pdf.addPage(); y = 20; }
+        pdf.setFont("helvetica", "bold"); pdf.setFontSize(12);
         pdf.text(`Групи (${fm.group ?? ""})`, margin, y); y += 8;
-        pdf.setFont("helvetica", "bold"); pdf.setFontSize(9);
         pdf.setFillColor(226, 232, 240);
-        pdf.rect(margin, y - 4, contentW, 7, "F");
+        pdf.rect(margin, y - 5, contentW, 8, "F");
+        pdf.setFontSize(9);
         pdf.text("Група", margin + 2, y);
-        pdf.text("n", margin + 110, y);
-        pdf.text("Летальність", margin + 130, y);
-        pdf.text("ICU дні", margin + 165, y);
-        y += 8;
-        pdf.setFont("helvetica", "normal"); pdf.setFontSize(9);
+        pdf.text("n", margin + 105, y, { align: "right" });
+        pdf.text("Летальність", margin + 140, y, { align: "right" });
+        pdf.text("ICU дні", margin + 175, y, { align: "right" });
+        y += 7;
         groupStats.forEach((g, i) => {
-          if (y > pageH - 20) { pdf.addPage(); y = 20; }
+          if (y > pageH - 15) { pdf.addPage(); y = 20; }
           if (i % 2 === 0) { pdf.setFillColor(248, 250, 252); pdf.rect(margin, y - 4, contentW, 7, "F"); }
-          pdf.text(g.name.slice(0, 45), margin + 2, y);
-          pdf.text(String(g.n), margin + 110, y);
-          pdf.text(g.mortality > 0 ? `${g.mortality} (${Math.round(100 * g.mortality / g.n)}%)` : "0", margin + 130, y);
-          pdf.text(g.icu > 0 ? `${g.icu.toFixed(1)} д` : "—", margin + 165, y);
-          y += 7;
+          pdf.setFont("helvetica", "normal"); pdf.setFontSize(9);
+          pdf.text(g.name.length > 38 ? g.name.slice(0, 36) + "…" : g.name, margin + 2, y);
+          pdf.text(String(g.n), margin + 105, y, { align: "right" });
+          pdf.text(g.mortality > 0 ? `${g.mortality} (${Math.round(100 * g.mortality / g.n)}%)` : "0", margin + 140, y, { align: "right" });
+          pdf.text(g.icu > 0 ? `${g.icu.toFixed(1)} д` : "—", margin + 175, y, { align: "right" });
+          y += 6;
         });
       }
 
-      // Charts screenshot
+      // ── Сторінка 2: Графіки ──
       pdf.addPage();
-      y = 20;
-      pdf.setFont("helvetica", "bold"); pdf.setFontSize(13);
-      pdf.text("Графіки", margin, y); y += 10;
+      pdf.setFont("helvetica", "bold"); pdf.setFontSize(12);
+      pdf.text("Графіки", margin, 20);
 
-      const canvas = await html2canvas(el, { scale: 1.5, useCORS: true, backgroundColor: "#ffffff" });
+      const canvas = await html2canvas(el, {
+        scale: 2, useCORS: true, backgroundColor: "#f8fafc", logging: false,
+      });
       const imgData = canvas.toDataURL("image/png");
       const imgH = (canvas.height * contentW) / canvas.width;
+      const availH = pageH - 30;
 
-      if (imgH <= pageH - y - margin) {
-        pdf.addImage(imgData, "PNG", margin, y, contentW, imgH);
+      if (imgH <= availH) {
+        pdf.addImage(imgData, "PNG", margin, 28, contentW, imgH);
       } else {
-        // Split across pages
-        const ratio = canvas.width / contentW;
-        const sliceH = (pageH - y - margin) * ratio;
-        let srcY = 0;
-        let first = true;
+        const scale = canvas.width / contentW;
+        const slicePx = availH * scale;
+        let srcY = 0; let firstSlice = true;
         while (srcY < canvas.height) {
-          if (!first) { pdf.addPage(); y = margin; }
-          const tmpCanvas = document.createElement("canvas");
-          tmpCanvas.width = canvas.width;
-          tmpCanvas.height = Math.min(sliceH, canvas.height - srcY);
-          const ctx = tmpCanvas.getContext("2d")!;
-          ctx.drawImage(canvas, 0, -srcY);
-          const slice = tmpCanvas.toDataURL("image/png");
-          const sliceDisplayH = tmpCanvas.height / ratio;
-          pdf.addImage(slice, "PNG", margin, y, contentW, sliceDisplayH);
-          srcY += sliceH; first = false;
+          if (!firstSlice) pdf.addPage();
+          const sliceH = Math.min(slicePx, canvas.height - srcY);
+          const tmp = document.createElement("canvas");
+          tmp.width = canvas.width; tmp.height = sliceH;
+          tmp.getContext("2d")!.drawImage(canvas, 0, -srcY);
+          pdf.addImage(tmp.toDataURL("image/png"), "PNG", margin, firstSlice ? 28 : 10, contentW, sliceH / scale);
+          srcY += slicePx; firstSlice = false;
         }
       }
 
-      pdf.save(`cohort_${ds.name.replace(".csv", "")}_${new Date().toISOString().slice(0, 10)}.pdf`);
+      pdf.save(`cohort_${ds.name.replace(".csv", "")}_${date}.pdf`);
+    } catch (err) {
+      console.error("PDF export error:", err);
+      alert("Помилка генерації PDF. Перевірте консоль браузера.");
     } finally {
       setExporting(false);
     }
