@@ -172,6 +172,8 @@ function StatCard({ label, value, sub, color = "slate" }: { label: string; value
 // ─────────────────────────────────────────────────────────────
 function AnalysisPanel({ ds }: { ds: CohortDataset }) {
   const [tab, setTab] = useState<"overview" | "groups" | "outcomes" | "raw">("overview");
+  const [exporting, setExporting] = useState(false);
+  const reportRef = useRef<HTMLDivElement>(null);
   const fm = detectFields(ds.headers);
   const { rows } = ds;
   const n = rows.length;
@@ -260,6 +262,188 @@ function AnalysisPanel({ ds }: { ds: CohortDataset }) {
     { id: "raw", label: "🔢 Дані" },
   ] as const;
 
+  // ── Export CSV ─────────────────────────────────────────────
+  const exportCSV = () => {
+    const date = new Date().toISOString().slice(0, 10);
+    const rows: string[][] = [];
+
+    // Header
+    rows.push(["Virtual ICU — Когортна статистика"]);
+    rows.push([`Файл: ${ds.name}`]);
+    rows.push([`Дата: ${date}`]);
+    rows.push([`Пацієнтів: ${n}`]);
+    rows.push([]);
+
+    // Summary
+    rows.push(["=== ЗАГАЛЬНА СТАТИСТИКА ==="]);
+    rows.push(["Показник", "Значення"]);
+    rows.push(["Всього пацієнтів", String(n)]);
+    if (mortality > 0) rows.push(["Летальність", `${mortality} (${Math.round(100 * mortality / n)}%)`]);
+    if (ageArr.length) rows.push(["Середній вік", `${mean(ageArr).toFixed(1)} р (${Math.min(...ageArr).toFixed(0)}–${Math.max(...ageArr).toFixed(0)})`]);
+    if (icuArr.length) rows.push(["ICU дні (сер./медіана)", `${mean(icuArr).toFixed(1)} / ${median(icuArr).toFixed(1)}`]);
+    if (hospArr.length) rows.push(["Ліжко-дні (сер.)", mean(hospArr).toFixed(1)]);
+    if (ventHArr.length) rows.push(["ШВЛ год (сер./макс)", `${mean(ventHArr).toFixed(1)} / ${Math.max(...ventHArr).toFixed(0)}`]);
+    if (vent24n > 0) rows.push(["ШВЛ > 24 год", `${vent24n} (${Math.round(100 * vent24n / n)}%)`]);
+    if (urgentN > 0) rows.push(["Ургентні", `${urgentN} (${Math.round(100 * urgentN / n)}%)`]);
+    if (eblArr.length) rows.push(["Крововтрата мл (сер./макс)", `${mean(eblArr).toFixed(0)} / ${Math.max(...eblArr).toFixed(0)}`]);
+    rows.push([]);
+
+    // Sex
+    if (Object.keys(sexCounts).length > 0) {
+      rows.push(["=== СТАТЬ ==="]);
+      rows.push(["Стать", "n", "%"]);
+      Object.entries(sexCounts).forEach(([s, c]) => rows.push([s, String(c), `${Math.round(100 * c / n)}%`]));
+      rows.push([]);
+    }
+
+    // Groups
+    if (groupStats.length > 0) {
+      rows.push([`=== ГРУПИ (${fm.group ?? ""}) ===`]);
+      const hasIcu = icuArr.length > 0;
+      const hasVent = ventHArr.length > 0;
+      const header = ["Група", "n", "%"];
+      if (mortality > 0) header.push("Летальних", "Летальність %");
+      if (hasIcu) header.push("ICU дні (сер.)");
+      if (hasVent) header.push("ШВЛ год (сер.)");
+      rows.push(header);
+      groupStats.forEach(g => {
+        const row = [g.name, String(g.n), `${Math.round(100 * g.n / n)}%`];
+        if (mortality > 0) row.push(String(g.mortality), g.n > 0 ? `${Math.round(100 * g.mortality / g.n)}%` : "—");
+        if (hasIcu) row.push(g.icu > 0 ? g.icu.toFixed(1) : "—");
+        if (hasVent) row.push(g.vent > 0 ? g.vent.toFixed(1) : "—");
+        rows.push(row);
+      });
+      rows.push([]);
+    }
+
+    // Outcomes
+    if (outcomeDist.length > 0) {
+      rows.push(["=== РЕЗУЛЬТАТИ ==="]);
+      rows.push(["Результат", "n", "%"]);
+      outcomeDist.forEach(o => rows.push([o.name, String(o.value), `${Math.round(100 * o.value / n)}%`]));
+    }
+
+    const csv = rows.map(r => r.map(c => `"${c.replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `cohort_${ds.name.replace(".csv", "")}_${date}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+  };
+
+  // ── Export PDF ─────────────────────────────────────────────
+  const exportPDF = async () => {
+    setExporting(true);
+    try {
+      const [{ default: jsPDF }, { default: html2canvas }] = await Promise.all([
+        import("jspdf"),
+        import("html2canvas"),
+      ]);
+
+      const el = reportRef.current;
+      if (!el) return;
+
+      // Temporarily show all tabs content
+      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      const pageW = 210; const pageH = 297; const margin = 12;
+      const contentW = pageW - margin * 2;
+
+      // Title page
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(18);
+      pdf.text("Virtual ICU — Когортна статистика", margin, 30);
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(11);
+      pdf.text(`Файл: ${ds.name}`, margin, 42);
+      pdf.text(`Дата: ${new Date().toLocaleDateString("uk-UA")}`, margin, 50);
+      pdf.text(`Пацієнтів: ${n}`, margin, 58);
+
+      // Summary table
+      let y = 75;
+      pdf.setFont("helvetica", "bold"); pdf.setFontSize(13);
+      pdf.text("Загальна статистика", margin, y); y += 8;
+      pdf.setFont("helvetica", "normal"); pdf.setFontSize(10);
+
+      const summaryRows: [string, string][] = [
+        ["Всього пацієнтів", String(n)],
+        ...(mortality > 0 ? [["Летальність", `${mortality} (${Math.round(100 * mortality / n)}%)`] as [string, string]] : []),
+        ...(ageArr.length ? [["Середній вік", `${mean(ageArr).toFixed(1)} р`] as [string, string]] : []),
+        ...(icuArr.length ? [["ICU дні (сер./медіана)", `${mean(icuArr).toFixed(1)} / ${median(icuArr).toFixed(1)}`] as [string, string]] : []),
+        ...(ventHArr.length ? [["ШВЛ год (сер.)", mean(ventHArr).toFixed(1)] as [string, string]] : []),
+        ...(eblArr.length ? [["Крововтрата мл (сер.)", mean(eblArr).toFixed(0)] as [string, string]] : []),
+      ];
+
+      summaryRows.forEach(([label, val], i) => {
+        if (i % 2 === 0) { pdf.setFillColor(248, 250, 252); pdf.rect(margin, y - 4, contentW, 7, "F"); }
+        pdf.text(label, margin + 2, y);
+        pdf.text(val, margin + contentW - 2, y, { align: "right" });
+        y += 8;
+      });
+
+      // Groups table
+      if (groupStats.length > 0) {
+        y += 8;
+        if (y > pageH - 60) { pdf.addPage(); y = 20; }
+        pdf.setFont("helvetica", "bold"); pdf.setFontSize(13);
+        pdf.text(`Групи (${fm.group ?? ""})`, margin, y); y += 8;
+        pdf.setFont("helvetica", "bold"); pdf.setFontSize(9);
+        pdf.setFillColor(226, 232, 240);
+        pdf.rect(margin, y - 4, contentW, 7, "F");
+        pdf.text("Група", margin + 2, y);
+        pdf.text("n", margin + 110, y);
+        pdf.text("Летальність", margin + 130, y);
+        pdf.text("ICU дні", margin + 165, y);
+        y += 8;
+        pdf.setFont("helvetica", "normal"); pdf.setFontSize(9);
+        groupStats.forEach((g, i) => {
+          if (y > pageH - 20) { pdf.addPage(); y = 20; }
+          if (i % 2 === 0) { pdf.setFillColor(248, 250, 252); pdf.rect(margin, y - 4, contentW, 7, "F"); }
+          pdf.text(g.name.slice(0, 45), margin + 2, y);
+          pdf.text(String(g.n), margin + 110, y);
+          pdf.text(g.mortality > 0 ? `${g.mortality} (${Math.round(100 * g.mortality / g.n)}%)` : "0", margin + 130, y);
+          pdf.text(g.icu > 0 ? `${g.icu.toFixed(1)} д` : "—", margin + 165, y);
+          y += 7;
+        });
+      }
+
+      // Charts screenshot
+      pdf.addPage();
+      y = 20;
+      pdf.setFont("helvetica", "bold"); pdf.setFontSize(13);
+      pdf.text("Графіки", margin, y); y += 10;
+
+      const canvas = await html2canvas(el, { scale: 1.5, useCORS: true, backgroundColor: "#ffffff" });
+      const imgData = canvas.toDataURL("image/png");
+      const imgH = (canvas.height * contentW) / canvas.width;
+
+      if (imgH <= pageH - y - margin) {
+        pdf.addImage(imgData, "PNG", margin, y, contentW, imgH);
+      } else {
+        // Split across pages
+        const ratio = canvas.width / contentW;
+        const sliceH = (pageH - y - margin) * ratio;
+        let srcY = 0;
+        let first = true;
+        while (srcY < canvas.height) {
+          if (!first) { pdf.addPage(); y = margin; }
+          const tmpCanvas = document.createElement("canvas");
+          tmpCanvas.width = canvas.width;
+          tmpCanvas.height = Math.min(sliceH, canvas.height - srcY);
+          const ctx = tmpCanvas.getContext("2d")!;
+          ctx.drawImage(canvas, 0, -srcY);
+          const slice = tmpCanvas.toDataURL("image/png");
+          const sliceDisplayH = tmpCanvas.height / ratio;
+          pdf.addImage(slice, "PNG", margin, y, contentW, sliceDisplayH);
+          srcY += sliceH; first = false;
+        }
+      }
+
+      pdf.save(`cohort_${ds.name.replace(".csv", "")}_${new Date().toISOString().slice(0, 10)}.pdf`);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -268,11 +452,21 @@ function AnalysisPanel({ ds }: { ds: CohortDataset }) {
           <h3 className="font-semibold text-slate-800">📁 {ds.name}</h3>
           <p className="text-xs text-slate-400 mt-0.5">{n} пацієнтів · {ds.headers.length} показників</p>
         </div>
-        <div className="flex gap-2 text-xs text-slate-400">
-          {fm.death && <span className="bg-slate-100 px-2 py-1 rounded">✓ летальність</span>}
-          {fm.age && <span className="bg-slate-100 px-2 py-1 rounded">✓ вік</span>}
-          {fm.icu_days && <span className="bg-slate-100 px-2 py-1 rounded">✓ ICU дні</span>}
-          {fm.group && <span className="bg-slate-100 px-2 py-1 rounded">✓ групи</span>}
+        <div className="flex items-center gap-2">
+          <div className="flex gap-2 text-xs text-slate-400">
+            {fm.death && <span className="bg-slate-100 px-2 py-1 rounded">✓ летальність</span>}
+            {fm.age && <span className="bg-slate-100 px-2 py-1 rounded">✓ вік</span>}
+            {fm.icu_days && <span className="bg-slate-100 px-2 py-1 rounded">✓ ICU дні</span>}
+            {fm.group && <span className="bg-slate-100 px-2 py-1 rounded">✓ групи</span>}
+          </div>
+          <button onClick={exportCSV}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 transition-colors">
+            ⬇ CSV
+          </button>
+          <button onClick={exportPDF} disabled={exporting}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 transition-colors disabled:opacity-50">
+            {exporting ? "⏳ PDF..." : "⬇ PDF"}
+          </button>
         </div>
       </div>
 
@@ -287,6 +481,7 @@ function AnalysisPanel({ ds }: { ds: CohortDataset }) {
         ))}
       </div>
 
+      <div ref={reportRef}>
       {/* ── OVERVIEW ── */}
       {tab === "overview" && (
         <div className="space-y-4">
@@ -594,6 +789,7 @@ function AnalysisPanel({ ds }: { ds: CohortDataset }) {
           )}
         </div>
       )}
+      </div>
     </div>
   );
 }
