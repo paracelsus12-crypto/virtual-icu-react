@@ -335,26 +335,8 @@ function AnalysisPanel({ ds }: { ds: CohortDataset }) {
   const exportPDF = async () => {
     setExporting(true);
     try {
-      const el = reportRef.current;
-      if (!el) return;
-
-      // Завантажуємо бібліотеки через CDN (надійніше ніж dynamic import у Next.js)
-      const loadScript = (src: string) => new Promise<void>((resolve, reject) => {
-        if (document.querySelector(`script[src="${src}"]`)) { resolve(); return; }
-        const s = document.createElement("script");
-        s.src = src;
-        s.onload = () => resolve();
-        s.onerror = () => reject(new Error(`Failed to load ${src}`));
-        document.head.appendChild(s);
-      });
-
-      await loadScript("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js");
-      await loadScript("https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js");
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { jsPDF } = (window as any).jspdf;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const html2canvas = (window as any).html2canvas;
+      // Використовуємо встановлений пакет напряму
+      const { jsPDF } = await import("jspdf");
 
       const margin = 12;
       const pageW = 210;
@@ -364,18 +346,23 @@ function AnalysisPanel({ ds }: { ds: CohortDataset }) {
 
       const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
 
-      // ── Сторінка 1: Статистика ──
+      // ── Заголовок ──
       pdf.setFont("helvetica", "bold");
       pdf.setFontSize(16);
       pdf.text("Virtual ICU — Когортна статистика", margin, 24);
+      pdf.setDrawColor(59, 130, 246);
+      pdf.setLineWidth(0.5);
+      pdf.line(margin, 27, pageW - margin, 27);
+
       pdf.setFont("helvetica", "normal");
       pdf.setFontSize(10);
       pdf.setTextColor(100);
-      pdf.text(`Файл: ${ds.name}`, margin, 34);
-      pdf.text(`Дата: ${new Date().toLocaleDateString("uk-UA")}`, margin, 40);
-      pdf.text(`Пацієнтів: ${n}`, margin, 46);
+      pdf.text(`Файл: ${ds.name}`, margin, 35);
+      pdf.text(`Дата: ${new Date().toLocaleDateString("uk-UA")}`, margin, 41);
+      pdf.text(`Пацієнтів: ${n}`, margin, 47);
       pdf.setTextColor(0);
 
+      // ── Загальна статистика ──
       let y = 60;
       pdf.setFont("helvetica", "bold"); pdf.setFontSize(12);
       pdf.text("Загальна статистика", margin, y); y += 8;
@@ -384,14 +371,16 @@ function AnalysisPanel({ ds }: { ds: CohortDataset }) {
         ["Всього пацієнтів", String(n)],
         ...(mortality > 0 ? [["Летальність", `${mortality} (${Math.round(100 * mortality / n)}%)`] as [string, string]] : []),
         ...(ageArr.length ? [["Середній вік", `${mean(ageArr).toFixed(1)} р (${Math.min(...ageArr).toFixed(0)}–${Math.max(...ageArr).toFixed(0)})`] as [string, string]] : []),
-        ...(icuArr.length ? [["ICU дні (сер./медіана)", `${mean(icuArr).toFixed(1)} / ${median(icuArr).toFixed(1)}`] as [string, string]] : []),
-        ...(hospArr.length ? [["Ліжко-дні (сер.)", mean(hospArr).toFixed(1)] as [string, string]] : []),
-        ...(ventHArr.length ? [["ШВЛ год (сер./макс)", `${mean(ventHArr).toFixed(1)} / ${Math.max(...ventHArr).toFixed(0)}`] as [string, string]] : []),
-        ...(eblArr.length ? [["Крововтрата мл (сер.)", mean(eblArr).toFixed(0)] as [string, string]] : []),
+        ...(icuArr.length ? [["ICU дні (сер. / медіана)", `${mean(icuArr).toFixed(1)} / ${median(icuArr).toFixed(1)}`] as [string, string]] : []),
+        ...(hospArr.length ? [["Госп. ліжко-дні (сер.)", mean(hospArr).toFixed(1)] as [string, string]] : []),
+        ...(ventHArr.length ? [["ШВЛ год (сер. / макс)", `${mean(ventHArr).toFixed(1)} / ${Math.max(...ventHArr).toFixed(0)}`] as [string, string]] : []),
+        ...(vent24n > 0 ? [["ШВЛ > 24 год", `${vent24n} (${Math.round(100 * vent24n / n)}%)`] as [string, string]] : []),
+        ...(eblArr.length ? [["Крововтрата мл (сер. / макс)", `${mean(eblArr).toFixed(0)} / ${Math.max(...eblArr).toFixed(0)}`] as [string, string]] : []),
         ...(urgentN > 0 ? [["Ургентні", `${urgentN} (${Math.round(100 * urgentN / n)}%)`] as [string, string]] : []),
       ];
 
       summaryRows.forEach(([label, val], i) => {
+        if (y > pageH - 20) { pdf.addPage(); y = 20; }
         if (i % 2 === 0) { pdf.setFillColor(245, 247, 250); pdf.rect(margin, y - 4, contentW, 7, "F"); }
         pdf.setFont("helvetica", "normal"); pdf.setFontSize(10);
         pdf.text(label, margin + 2, y);
@@ -399,7 +388,31 @@ function AnalysisPanel({ ds }: { ds: CohortDataset }) {
         y += 7;
       });
 
-      // Groups table
+      // ── Розподіл результатів ──
+      if (outcomeDist.length > 0) {
+        y += 8;
+        if (y > pageH - 50) { pdf.addPage(); y = 20; }
+        pdf.setFont("helvetica", "bold"); pdf.setFontSize(12);
+        pdf.text("Розподіл результатів", margin, y); y += 8;
+        pdf.setFillColor(226, 232, 240);
+        pdf.rect(margin, y - 5, contentW, 8, "F");
+        pdf.setFontSize(9);
+        pdf.text("Результат", margin + 2, y);
+        pdf.text("n", margin + 120, y, { align: "right" });
+        pdf.text("%", margin + 175, y, { align: "right" });
+        y += 7;
+        outcomeDist.forEach((o, i) => {
+          if (y > pageH - 15) { pdf.addPage(); y = 20; }
+          if (i % 2 === 0) { pdf.setFillColor(248, 250, 252); pdf.rect(margin, y - 4, contentW, 7, "F"); }
+          pdf.setFont("helvetica", "normal"); pdf.setFontSize(9);
+          pdf.text(o.name.length > 50 ? o.name.slice(0, 48) + "…" : o.name, margin + 2, y);
+          pdf.text(String(o.value), margin + 120, y, { align: "right" });
+          pdf.text(`${Math.round(100 * o.value / n)}%`, margin + 175, y, { align: "right" });
+          y += 6;
+        });
+      }
+
+      // ── Групи ──
       if (groupStats.length > 0) {
         y += 8;
         if (y > pageH - 70) { pdf.addPage(); y = 20; }
@@ -409,49 +422,33 @@ function AnalysisPanel({ ds }: { ds: CohortDataset }) {
         pdf.rect(margin, y - 5, contentW, 8, "F");
         pdf.setFontSize(9);
         pdf.text("Група", margin + 2, y);
-        pdf.text("n", margin + 105, y, { align: "right" });
-        pdf.text("Летальність", margin + 140, y, { align: "right" });
+        pdf.text("n", margin + 95, y, { align: "right" });
+        pdf.text("%", margin + 115, y, { align: "right" });
+        pdf.text("Летальність", margin + 150, y, { align: "right" });
         pdf.text("ICU дні", margin + 175, y, { align: "right" });
         y += 7;
         groupStats.forEach((g, i) => {
           if (y > pageH - 15) { pdf.addPage(); y = 20; }
           if (i % 2 === 0) { pdf.setFillColor(248, 250, 252); pdf.rect(margin, y - 4, contentW, 7, "F"); }
           pdf.setFont("helvetica", "normal"); pdf.setFontSize(9);
-          pdf.text(g.name.length > 38 ? g.name.slice(0, 36) + "…" : g.name, margin + 2, y);
-          pdf.text(String(g.n), margin + 105, y, { align: "right" });
-          pdf.text(g.mortality > 0 ? `${g.mortality} (${Math.round(100 * g.mortality / g.n)}%)` : "0", margin + 140, y, { align: "right" });
+          pdf.text(g.name.length > 34 ? g.name.slice(0, 32) + "…" : g.name, margin + 2, y);
+          pdf.text(String(g.n), margin + 95, y, { align: "right" });
+          pdf.text(`${Math.round(100 * g.n / n)}%`, margin + 115, y, { align: "right" });
+          pdf.text(g.mortality > 0 ? `${g.mortality} (${Math.round(100 * g.mortality / g.n)}%)` : "0", margin + 150, y, { align: "right" });
           pdf.text(g.icu > 0 ? `${g.icu.toFixed(1)} д` : "—", margin + 175, y, { align: "right" });
           y += 6;
         });
       }
 
-      // ── Сторінка 2: Графіки ──
-      pdf.addPage();
-      pdf.setFont("helvetica", "bold"); pdf.setFontSize(12);
-      pdf.text("Графіки", margin, 20);
-
-      const canvas = await html2canvas(el, {
-        scale: 2, useCORS: true, backgroundColor: "#f8fafc", logging: false,
-      });
-      const imgData = canvas.toDataURL("image/png");
-      const imgH = (canvas.height * contentW) / canvas.width;
-      const availH = pageH - 30;
-
-      if (imgH <= availH) {
-        pdf.addImage(imgData, "PNG", margin, 28, contentW, imgH);
-      } else {
-        const scale = canvas.width / contentW;
-        const slicePx = availH * scale;
-        let srcY = 0; let firstSlice = true;
-        while (srcY < canvas.height) {
-          if (!firstSlice) pdf.addPage();
-          const sliceH = Math.min(slicePx, canvas.height - srcY);
-          const tmp = document.createElement("canvas");
-          tmp.width = canvas.width; tmp.height = sliceH;
-          tmp.getContext("2d")!.drawImage(canvas, 0, -srcY);
-          pdf.addImage(tmp.toDataURL("image/png"), "PNG", margin, firstSlice ? 28 : 10, contentW, sliceH / scale);
-          srcY += slicePx; firstSlice = false;
-        }
+      // ── Футер ──
+      const pageCount = pdf.getNumberOfPages();
+      for (let p = 1; p <= pageCount; p++) {
+        pdf.setPage(p);
+        pdf.setFont("helvetica", "normal"); pdf.setFontSize(8);
+        pdf.setTextColor(150);
+        pdf.text(`Virtual ICU Monitor v2 — Тільки для освітніх цілей`, margin, pageH - 8);
+        pdf.text(`${p} / ${pageCount}`, pageW - margin, pageH - 8, { align: "right" });
+        pdf.setTextColor(0);
       }
 
       pdf.save(`cohort_${ds.name.replace(".csv", "")}_${date}.pdf`);
