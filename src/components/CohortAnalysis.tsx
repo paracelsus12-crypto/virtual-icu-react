@@ -403,7 +403,7 @@ function AnalysisPanel({ ds }: { ds: CohortDataset }) {
                       <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                       <XAxis type="number" tick={{ fontSize: 11 }} />
                       <YAxis dataKey="name" type="category" tick={{ fontSize: 10 }} width={200} />
-                      <Tooltip formatter={(v: number) => v.toFixed(1) + " д"} />
+                      <Tooltip formatter={(v) => typeof v === "number" ? v.toFixed(1) + " д" : v} />
                       <Bar dataKey="icu" name="ICU дні (сер.)" fill="#f97316" radius={[0, 3, 3, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
@@ -462,7 +462,7 @@ function AnalysisPanel({ ds }: { ds: CohortDataset }) {
                 <ResponsiveContainer width="100%" height={220}>
                   <PieChart>
                     <Pie data={outcomeDist} cx="50%" cy="50%" outerRadius={80} dataKey="value"
-                      label={({ name, percent }) => `${(percent * 100).toFixed(0)}%`}>
+                      label={({ name, percent }) => `${((percent ?? 0) * 100).toFixed(0)}%`}>
                       {outcomeDist.map((_, i) => (
                         <Cell key={i} fill={
                           outcomeDist[i].name.toLowerCase().includes("exitus") ||

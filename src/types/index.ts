@@ -11,8 +11,19 @@ export interface VitalSigns {
   time_hours?: number;
 }
 
-export interface PatientRecord extends VitalSigns {
-  [key: string]: number | string | boolean | null | undefined;
+// PatientRecord НЕ розширює VitalSigns через index signature конфлікт
+// Замість цього явно перелічуємо всі поля
+export interface PatientRecord {
+  time_hours: number;
+  heart_rate: number;
+  systolic_bp: number;
+  diastolic_bp: number;
+  respiratory_rate: number;
+  spo2: number;
+  temperature: number;
+  alert_status: "Alert" | "Confused" | "Lethargic" | "Unresponsive";
+  supplemental_oxygen: boolean;
+  age: number;
 }
 
 export interface NEWS2Result {
@@ -34,7 +45,11 @@ export interface qSOFAResult {
   total: number;
   sepsis_risk: boolean;
   recommendation: string;
-  components: { altered_mentation: number; respiratory_rate: number; systolic_bp: number; };
+  components: {
+    altered_mentation: number;
+    respiratory_rate: number;
+    systolic_bp: number;
+  };
 }
 
 export interface CARTResult {
@@ -48,7 +63,14 @@ export interface CARTResult {
 export interface SOFAResult {
   total: number;
   mortality_range: string;
-  components: { respiration: number; coagulation: number; liver: number; cardiovascular: number; cns: number; renal: number; };
+  components: {
+    respiration: number;
+    coagulation: number;
+    liver: number;
+    cardiovascular: number;
+    cns: number;
+    renal: number;
+  };
 }
 
 export type NavigationSection = "monitoring" | "cardiac" | "clinical";

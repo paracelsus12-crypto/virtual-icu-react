@@ -54,34 +54,25 @@ function parseCSV(text: string): { data: PatientRecord[]; warnings: string[] } {
   const spo2_arr = parseCol(col("spo2"));
   const temp_arr = parseCol(col("temperature"));
 
-  const optionals = [
-    { name: "systolic_bp",      arr: sbp_arr,  fallback: 120  },
-    { name: "diastolic_bp",     arr: dbp_arr,  fallback: 75   },
-    { name: "respiratory_rate", arr: rr_arr,   fallback: 16   },
-    { name: "spo2",             arr: spo2_arr, fallback: 97   },
-    { name: "temperature",      arr: temp_arr, fallback: 36.8 },
-  ];
-
-  for (const o of optionals) {
-    if (o.arr.every(v => v === null)) {
-      warnings.push(`«${o.name}» відсутній — використано ${o.fallback}`);
-      o.arr.fill(o.fallback);
-    } else if (o.arr.some(v => v === null)) {
-      const n = o.arr.filter(v => v === null).length;
-      warnings.push(`«${o.name}»: ${n} пропущених — заповнено інтерполяцією`);
+  const warnAndInterp = (arr: (number | null)[], name: string, fallback: number): number[] => {
+    if (arr.every(v => v === null)) {
+      warnings.push(`«${name}» відсутній — використано ${fallback}`);
+      return arr.map(() => fallback);
     }
-  }
+    if (arr.some(v => v === null)) {
+      const n = arr.filter(v => v === null).length;
+      warnings.push(`«${name}»: ${n} пропущених — заповнено інтерполяцією`);
+    }
+    return interpolate(arr);
+  };
 
-  const interp = (arr: (number | null)[], fb: number) =>
-    arr.every(v => v === null) ? arr.map(() => fb) as number[] : interpolate(arr);
-
-  const th   = interp(th_arr,   0)    as number[];
-  const hr   = interp(hr_arr,   75)   as number[];
-  const sbp  = interp(sbp_arr,  120)  as number[];
-  const dbp  = interp(dbp_arr,  75)   as number[];
-  const rr   = interp(rr_arr,   16)   as number[];
-  const spo2 = interp(spo2_arr, 97)   as number[];
-  const temp = interp(temp_arr, 36.8) as number[];
+  const th   = warnAndInterp(th_arr,   "time_hours",       0);
+  const hr   = warnAndInterp(hr_arr,   "heart_rate",       75);
+  const sbp  = warnAndInterp(sbp_arr,  "systolic_bp",      120);
+  const dbp  = warnAndInterp(dbp_arr,  "diastolic_bp",     75);
+  const rr   = warnAndInterp(rr_arr,   "respiratory_rate", 16);
+  const spo2 = warnAndInterp(spo2_arr, "spo2",             97);
+  const temp = warnAndInterp(temp_arr, "temperature",      36.8);
 
   const hasAlertCol = col("alert_status") !== -1;
   if (!hasAlertCol) warnings.push("«alert_status» — визначається автоматично з АТС та SpO₂");

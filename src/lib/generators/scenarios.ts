@@ -1,15 +1,4 @@
-export interface PatientRecord {
-  time_hours: number;
-  heart_rate: number;
-  systolic_bp: number;
-  diastolic_bp: number;
-  respiratory_rate: number;
-  spo2: number;
-  temperature: number;
-  alert_status: string;
-  supplemental_oxygen: boolean;
-  age: number;
-}
+export type { PatientRecord } from "@/types";
 
 // ─────────────────────────────────────────────────────────────
 // Utility
@@ -25,7 +14,9 @@ function clamp(val: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, val));
 }
 
-function getAlertStatus(sbp: number, spo2: number, hr: number): string {
+import type { PatientRecord } from "@/types";
+
+function getAlertStatus(sbp: number, spo2: number, hr: number): PatientRecord["alert_status"] {
   if (sbp < 70 || spo2 < 80 || hr === 0) return "Unresponsive";
   if (sbp < 90 || spo2 < 88) return "Lethargic";
   if (sbp < 100 || spo2 < 92) return "Confused";
